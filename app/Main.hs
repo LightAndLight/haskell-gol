@@ -8,10 +8,9 @@ import           Data.Char
 import           Data.Foldable
 import           Data.Monoid
 import           Graphics.Gloss.Interface.IO.Animate
+import           System.Environment
 import           System.IO
 
-width = 10
-height = 10
 cellSize = 20
 
 posMod :: Int -> Int -> Int
@@ -79,17 +78,19 @@ runGol w y g = let current = getRow y g in runGol' w (getRow (y+1) g) (getRow (y
     runGol' 0 below above current row = setCell 0 (gol 0 below above current) row
     runGol' w below above current row = setCell w (gol w below above current) (runGol' (w-1) below above current row)
 
-makeGolThread :: MVar Grid -> MVar Grid -> MVar () -> MVar () -> MVar () -> Int -> IO ThreadId
-makeGolThread readBuffer writeBuffer threadReturned runThreads pause n = forkIO . forever $ do
-  takeMVar runThreads
-  doPause <- tryReadMVar pause
+makeGolThread :: Config -> Int -> IO ThreadId
+makeGolThread config n = forkIO . forever $ do
+  let writeBuffer = getWriteBuffer config
+
+  takeMVar $ getRunThreads config
+  doPause <- tryReadMVar $ getPause config
   case doPause of
     Just () -> return ()
     Nothing -> do
-      newRow <- runGol width n <$> readMVar readBuffer
+      newRow <- runGol (getWidth config) n <$> readMVar (getReadBuffer config)
       updatedWriteBuffer <- setRow n newRow <$> takeMVar writeBuffer
       putMVar writeBuffer updatedWriteBuffer
-  putMVar threadReturned ()
+  putMVar (getThreadReturned config) ()
 
 showCell :: Cell -> Char
 showCell Alive = '#'
@@ -105,13 +106,19 @@ showGrid (Grid h rows) = "\n" ++ unlines (showGrid' True rows) ++ "\n"
     horizontalBorder w = [replicate (w+2) '-']
     cellsWithBorder cells = '|' : fmap showCell cells ++ "|"
 
-mainLoop :: MVar Grid -> MVar Grid -> MVar () -> MVar () -> MVar Command -> MVar () -> MVar () -> IO ()
-mainLoop readBuffer writeBuffer threadReturned runThreads currentCommand pause render = forever $ do
-  replicateM_ height $ putMVar runThreads ()
-  replicateM_ height $ takeMVar threadReturned
+mainLoop :: Config -> IO ()
+mainLoop config = forever $ do
+  let height = getHeight config
+      readBuffer = getReadBuffer config
+      writeBuffer = getWriteBuffer config
+      render = getRender config
+      pause = getPause config
+
+  replicateM_ height $ putMVar (getRunThreads config) ()
+  replicateM_ height . takeMVar $ getThreadReturned config
   readBuffer' <- takeMVar readBuffer
   writeBuffer' <- takeMVar writeBuffer
-  command <- tryTakeMVar currentCommand
+  command <- tryTakeMVar $ getCurrentCommand config
   writeBuffer'' <- case command of
     Just Start -> do
       tryTakeMVar pause
@@ -131,7 +138,7 @@ mainLoop readBuffer writeBuffer threadReturned runThreads currentCommand pause r
       putMVar writeBuffer readBuffer'
   putMVar render ()
   takeMVar render
-  threadDelay 1000000
+  threadDelay $ getRefreshRate config
 
 data Position = Position Int Int
 
@@ -290,21 +297,51 @@ controllerCallback render (Controller redraw _) = do
       Just () -> redraw
       Nothing -> return ()
 
+data Config = Config {
+  getWidth :: Int
+  , getHeight :: Int
+  , getRefreshRate :: Int
+  , getReadBuffer :: MVar Grid
+  , getWriteBuffer :: MVar Grid
+  , getThreadReturned :: MVar ()
+  , getRunThreads :: MVar ()
+  , getCurrentCommand :: MVar Command
+  , getPause :: MVar ()
+  , getRender :: MVar ()
+}
+
 main :: IO ()
 main = do
-  threadReturned <- newEmptyMVar
-  runThreads <- newEmptyMVar
-  readBuffer <- newMVar $ newGrid width height
-  writeBuffer <- newMVar $ newGrid width height
-  pause <- newEmptyMVar
-  currentCommand <- newEmptyMVar
-  render <- newEmptyMVar
-  for_ [0..height-1] $ makeGolThread readBuffer writeBuffer threadReturned runThreads pause
-  forkIO $ mainLoop readBuffer writeBuffer threadReturned runThreads currentCommand pause render
-  forkIO $ inputLoop currentCommand
-  animateIO
-    (InWindow "Game of Life" (width * cellSize, height * cellSize) (0, 0))
-    white
-    (renderCallback render writeBuffer)
-    (controllerCallback render)
-    
+  args <- getArgs
+  when (length args >= 3) $ do
+    let width = read $ args !! 0
+    let height = read $ args !! 1
+    let refreshRate = (read $ args !! 2) * 1000
+    threadReturned <- newEmptyMVar
+    runThreads <- newEmptyMVar
+    readBuffer <- newMVar $ newGrid width height
+    writeBuffer <- newMVar $ newGrid width height
+    pause <- newEmptyMVar
+    currentCommand <- newEmptyMVar
+    render <- newEmptyMVar
+    let config = Config
+          width
+          height
+          refreshRate
+          readBuffer
+          writeBuffer
+          threadReturned
+          runThreads
+          currentCommand
+          pause
+          render
+
+    for_ [0..height-1] $ makeGolThread config
+    forkIO $ mainLoop config
+    forkIO $ inputLoop currentCommand
+    animateIO
+      (InWindow "Game of Life" (width * cellSize, height * cellSize) (0, 0))
+      white
+      (renderCallback render writeBuffer)
+      (controllerCallback render)
+
