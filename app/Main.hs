@@ -7,10 +7,12 @@ import           Control.Monad.State
 import           Data.Char
 import           Data.Foldable
 import           Data.Monoid
+import           Graphics.Gloss.Interface.IO.Animate
 import           System.IO
 
 width = 10
 height = 10
+cellSize = 20
 
 posMod :: Int -> Int -> Int
 posMod a b = let res = a `mod` b
@@ -103,35 +105,33 @@ showGrid (Grid h rows) = "\n" ++ unlines (showGrid' True rows) ++ "\n"
     horizontalBorder w = [replicate (w+2) '-']
     cellsWithBorder cells = '|' : fmap showCell cells ++ "|"
 
-mainLoop :: MVar Grid -> MVar Grid -> MVar () -> MVar () -> MVar Command -> MVar () -> IO ()
-mainLoop readBuffer writeBuffer threadReturned runThreads currentCommand pause = loop
-  where
-    loop = do
-      replicateM_ height $ putMVar runThreads ()
-      replicateM_ height $ takeMVar threadReturned
-      readBuffer' <- takeMVar readBuffer
-      writeBuffer' <- takeMVar writeBuffer
-      command <- tryTakeMVar currentCommand
-      writeBuffer'' <- case command of
-            Just Start -> do
-              tryTakeMVar pause
-              return writeBuffer'
-            Just Stop -> do
-              putMVar pause ()
-              return writeBuffer'
-            Just command -> return $ runCommand command writeBuffer'
-            Nothing -> return writeBuffer'
-      putStrLn $ showGrid writeBuffer''
-      doPause <- tryReadMVar pause
-      case doPause of
-        Just () -> do
-          putMVar readBuffer readBuffer'
-          putMVar writeBuffer writeBuffer''
-        Nothing -> do
-          putMVar readBuffer writeBuffer''
-          putMVar writeBuffer readBuffer'
-      threadDelay 1000000
-      loop
+mainLoop :: MVar Grid -> MVar Grid -> MVar () -> MVar () -> MVar Command -> MVar () -> MVar () -> IO ()
+mainLoop readBuffer writeBuffer threadReturned runThreads currentCommand pause render = forever $ do
+  replicateM_ height $ putMVar runThreads ()
+  replicateM_ height $ takeMVar threadReturned
+  readBuffer' <- takeMVar readBuffer
+  writeBuffer' <- takeMVar writeBuffer
+  command <- tryTakeMVar currentCommand
+  writeBuffer'' <- case command of
+    Just Start -> do
+      tryTakeMVar pause
+      return writeBuffer'
+    Just Stop -> do
+      putMVar pause ()
+      return writeBuffer'
+    Just command -> return $ runCommand command writeBuffer'
+    Nothing -> return writeBuffer'
+  doPause <- tryReadMVar pause
+  case doPause of
+    Just () -> do
+      putMVar readBuffer readBuffer'
+      putMVar writeBuffer writeBuffer''
+    Nothing -> do
+      putMVar readBuffer writeBuffer''
+      putMVar writeBuffer readBuffer'
+  putMVar render ()
+  takeMVar render
+  threadDelay 1000000
 
 data Position = Position Int Int
 
@@ -152,7 +152,6 @@ data Command = SetCell Cell Position
              | Ship ShipType Position
              | Start
              | Stop
-             | End
              | Help
              | Clear
 
@@ -173,7 +172,6 @@ parseInput input = parseCommand $ words input
     parseCommand ("ship":"glider":rest) = Ship Glider <$> parsePosition rest
     parseCommand ["start"] = Just Start
     parseCommand ["stop"] = Just Stop
-    parseCommand ["end"] = Just End
     parseCommand ["help"] = Just Help
     parseCommand ["clear"] = Just Clear
     parseCommand _ = Nothing
@@ -251,11 +249,46 @@ inputLoop currentCommand = do
   hFlush stdout
   input <- getLine
   case parseInput input of
-    Just End -> return ()
     Just command -> do
       putMVar currentCommand command
       inputLoop currentCommand
     Nothing -> inputLoop currentCommand
+
+aliveCell :: Picture
+aliveCell = let s = fromIntegral cellSize :: Float in Color black $ rectangleSolid s s
+
+rowToPicture :: Int -> Int -> Row -> Picture
+rowToPicture h n (Row w cells) = Pictures $ cellsToPictures 0 n cells
+  where
+    cellsToPictures x y [] = []
+    cellsToPictures x y (Dead:cells) = cellsToPictures (x+1) y cells
+    cellsToPictures x y (Alive:cells) = let s = fromIntegral cellSize :: Float
+                                            xf = fromIntegral x :: Float
+                                            yf = fromIntegral y :: Float
+                                            xpos = xf * s - (fromIntegral w / 2) * s + s / 2
+                                            ypos = -yf * s + (fromIntegral h / 2) * s - s / 2
+      in Translate xpos ypos aliveCell : cellsToPictures (x+1) y cells
+
+
+gridToPicture :: Grid -> Picture
+gridToPicture (Grid h rows) = Pictures $ rowsToPictures 0 rows
+  where
+    rowsToPictures n [] = []
+    rowsToPictures n (row:rows) = rowToPicture h n row : rowsToPictures (n+1) rows
+
+renderCallback :: MVar () -> MVar Grid -> Float -> IO Picture
+renderCallback render writeBuffer _ = do
+  takeMVar render
+  grid <- readMVar writeBuffer
+  putMVar render ()
+  return $ gridToPicture grid
+
+controllerCallback :: MVar () -> Controller -> IO ()
+controllerCallback render (Controller redraw _) = do
+    doRender <- tryReadMVar render
+    case doRender of
+      Just () -> redraw
+      Nothing -> return ()
 
 main :: IO ()
 main = do
@@ -265,6 +298,13 @@ main = do
   writeBuffer <- newMVar $ newGrid width height
   pause <- newEmptyMVar
   currentCommand <- newEmptyMVar
+  render <- newEmptyMVar
   for_ [0..height-1] $ makeGolThread readBuffer writeBuffer threadReturned runThreads pause
-  forkIO $ mainLoop readBuffer writeBuffer threadReturned runThreads currentCommand pause
-  inputLoop currentCommand
+  forkIO $ mainLoop readBuffer writeBuffer threadReturned runThreads currentCommand pause render
+  forkIO $ inputLoop currentCommand
+  animateIO
+    (InWindow "Game of Life" (width * cellSize, height * cellSize) (0, 0))
+    white
+    (renderCallback render writeBuffer)
+    (controllerCallback render)
+    
