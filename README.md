@@ -10,10 +10,10 @@ It's based on COMP3301's first assignment for 2016.
 
 An interactive shell will appear. Valid commands:
 
-- still (block|loaf|boat|beehive) X Y
-- osc (toad|blinker|beacon) X Y
-- ship glider X Y
-- cell (alive|dead) X Y
-- start
-- stop
-- clear
+- `still (block|loaf|boat|beehive) X Y`
+- `osc (toad|blinker|beacon) X Y`
+- `ship glider X Y`
+- `cell (alive|dead) X Y`
+- `start`
+- `stop`
+- `clear`
