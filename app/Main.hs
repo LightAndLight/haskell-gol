@@ -11,8 +11,6 @@ import           Graphics.Gloss.Interface.IO.Animate
 import           System.Environment
 import           System.IO
 
-cellSize = 20
-
 posMod :: Int -> Int -> Int
 posMod a b = let res = a `mod` b
              in if res < 0 then res + b else res
@@ -260,6 +258,9 @@ inputLoop currentCommand = do
       putMVar currentCommand command
       inputLoop currentCommand
     Nothing -> inputLoop currentCommand
+
+cellSize :: Int
+cellSize = 20
 
 aliveCell :: Picture
 aliveCell = let s = fromIntegral cellSize :: Float in Color black $ rectangleSolid s s
