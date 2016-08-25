@@ -42,9 +42,9 @@ updateCell :: Int -> Int -> Cell -> Grid -> Grid
 updateCell x y c g = setRow y (setCell x c (getRow y g)) g
 
 newGrid :: Int -> Int -> Grid
-newGrid w h = Grid h $ replicate h makeRow
+newGrid w h = Grid h $ replicate h newRow
   where
-    makeRow = Row w $ replicate w Dead
+    newRow = Row w $ replicate w Dead
 
 countNeighbors :: Int -> Row -> Row -> Row -> Int
 countNeighbors x below above current =
@@ -175,6 +175,8 @@ parseInput input = parseCommand $ words input
     parseCommand ("osc":"beacon":rest) = Osc Beacon <$> parsePosition rest
     parseCommand ("osc":"toad":rest) = Osc Toad <$> parsePosition rest
     parseCommand ("ship":"glider":rest) = Ship Glider <$> parsePosition rest
+    parseCommand ("cell":"alive":rest) = SetCell Alive <$> parsePosition rest
+    parseCommand ("cell":"dead":rest) = SetCell Dead <$> parsePosition rest
     parseCommand ["start"] = Just Start
     parseCommand ["stop"] = Just Stop
     parseCommand ["help"] = Just Help
@@ -243,6 +245,7 @@ runCommand (Osc Blinker pos) = draw blinker pos
 runCommand (Osc Beacon pos) = draw beacon pos
 runCommand (Osc Toad pos) = draw toad pos
 runCommand (Ship Glider pos) = draw glider pos
+runCommand (SetCell cell (Position x y)) = updateCell x y cell
 runCommand Clear = clear
   where
     clear (Grid h (Row w _:_)) = newGrid w h
